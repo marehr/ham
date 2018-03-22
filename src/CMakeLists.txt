@@ -6,6 +6,8 @@
 project(ham_exe LANGUAGES CXX)
 cmake_minimum_required(VERSION 3.2 FATAL_ERROR) # TODO verfify
 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++1z -Wall -Wextra")
+
 add_subdirectory(ham)
 
 ### Benchmarks
