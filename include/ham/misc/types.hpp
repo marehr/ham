@@ -25,7 +25,7 @@ class result_container
 {
 public:
 	result_container() = default;
-	result_container(T&& res) : res(res) { }
+	result_container(T&& res) : res(std::move(res)) { }
 	T get() { return T(std::move(res)); }
 
 private:

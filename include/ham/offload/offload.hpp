@@ -39,11 +39,11 @@ class future
 {
 public:
 	future() = default;
-	
+
 	// create a dummy future, request is still invalid
 	future(bool valid) : valid_(valid)
 	{
-		
+
 	}
 
 	future(net::communicator::request req) // ownership of req ist transferred
@@ -52,7 +52,7 @@ public:
 
 	// move-only object
 	future(const future& other) = delete;
-	
+
 	future(future&& other)
 	 : req(std::move(other.req)), valid_(other.valid_) // move state of other
 	{
@@ -61,7 +61,7 @@ public:
 	}
 
 	future& operator=(const future& other) = delete;
-	
+
 	future& operator=(future&& other)
 	{
 		// if this future is valid, we have to complete protocol before overwriting this with other
@@ -97,7 +97,7 @@ public:
 				return T(); // return default instance
 			// the returned expression might evaluate to void for T = void,
 			// this only works in a single return statement, and allows to
-			// compile this with T=void and thus eleminates the need for a 	
+			// compile this with T=void and thus eleminates the need for a
 			// specialisation
 		} else {
 			HAM_DEBUG( HAM_LOG << "future::get(): error: get() called on invalid future (double get?)." << std::endl; )
@@ -192,7 +192,7 @@ void ping(node_t node, Functor&& func)
 {
 	using FunctorT = typename std::remove_reference<Functor>::type;
 	net::communicator& comm = runtime::instance().communicator();
-	
+
 	auto msg = detail::offload_msg<FunctorT, msg::execution_policy_direct>(std::forward<Functor>(func));
 	HAM_DEBUG( HAM_LOG << "runtime::ping(): sending msg..." << std::endl; )
 	net::communicator::request req = comm.allocate_request(node); // TODO(improvement): resource deallocation of this request (currently only used for terminating)
@@ -232,7 +232,7 @@ future<void> put(T* local_source, buffer_ptr<T>& remote_dest, size_t n)
 	comm.send_msg(result.get_request(), (void*)&msg, sizeof msg); // async
 	comm.send_data_async(result.get_request(), local_source, remote_dest, n); // async
 	comm.recv_result(result.get_request()); // trigger receiving the msgs result // async
-	
+
 	return result;
 #endif
 }
@@ -289,10 +289,10 @@ void get_sync(buffer_ptr<T> remote_source, T* local_dest, size_t n)
 // remote -> local = get
 // local -> local = (just make a memcpy)
 
-// TODO(feature, high priority): copy_async 
+// TODO(feature, high priority): copy_async
 //	- problems: combine two futures into a new one: recursive list template
 //     sync on read_result and write_result,
-//   
+//
 //template<typename T>
 //future<void> copy(buffer_ptr<T> source, buffer_ptr<T> dest, size_t n)
 //{
@@ -314,7 +314,7 @@ void copy_sync(buffer_ptr<T> source, buffer_ptr<T> dest, size_t n)
 
 	// issues a send operation on the source node, that sends the memory at source to the destination node
 	future<void> read_result(comm.allocate_request(source.node()));
-	auto read_msg = detail::offload_read_msg<T>(read_result.get_request(), dest.node(), source.get(), n); 
+	auto read_msg = detail::offload_read_msg<T>(read_result.get_request(), dest.node(), source.get(), n);
 	comm.send_msg(read_result.get_request(), (void*)&read_msg, sizeof read_msg);
 	comm.recv_result(read_result.get_request()); // trigger receiving the result
 
@@ -323,7 +323,7 @@ void copy_sync(buffer_ptr<T> source, buffer_ptr<T> dest, size_t n)
 	auto write_msg = detail::offload_write_msg<T>(write_result.get_request(), source.node(), dest.get(), n);
 	comm.send_msg(write_result.get_request(), (void*)&write_msg, sizeof write_msg); // async
 	comm.recv_result(write_result.get_request()); // trigger receiving the msg result // async
-	
+
 	// synchronise
 	read_result.get();
 	write_result.get();
@@ -339,4 +339,3 @@ void copy_sync(buffer_ptr<T> source, buffer_ptr<T> dest, size_t n)
 } // namespace ham
 
 #endif // ham_offload_offload_hpp
-

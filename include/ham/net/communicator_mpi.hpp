@@ -11,25 +11,42 @@
 #include <cassert>
 #include <cstring> // memcpy
 #include <cstdlib> // posix_memalign
+#include <utility>
 
 #include "ham/misc/constants.hpp"
 #include "ham/misc/resource_pool.hpp"
 #include "ham/misc/types.hpp"
 #include "ham/util/debug.hpp"
+#include "ham/util/exchange.hpp"
 #include "ham/util/log.hpp"
 
 namespace ham {
 namespace net {
 
+
 template<typename T>
 class buffer_ptr {
 public:
-	buffer_ptr();
+	buffer_ptr(); // see definition below
+	buffer_ptr(buffer_ptr const &) = default;
+	buffer_ptr(buffer_ptr && buffer)
+		: ptr_{util::exchange(buffer.ptr_, nullptr)},
+		  node_{util::exchange(buffer.node_, buffer_ptr{}.node_)}
+	{};
+
+	buffer_ptr& operator=(buffer_ptr const &) = default;
+	buffer_ptr& operator=(buffer_ptr && buffer)
+	{
+		ptr_ = util::exchange(buffer.ptr_, nullptr);
+		node_ = util::exchange(buffer.node_, buffer_ptr{}.node_);
+		return *this;
+	};
+
 	buffer_ptr(T* ptr, node_t node) : ptr_(ptr), node_(node) { }
 
-	T* get() { return ptr_; }
-	node_t node() { return node_; }
-	
+	T* get() const { return ptr_; }
+	node_t node() const { return node_; }
+
 	// element access
 	T& operator [] (size_t i);
 
@@ -64,7 +81,7 @@ public:
 	class request {
 	public:
 		request() : valid_(false) {} // instantiate invalid
-		
+
 		request(node_t target_node, node_t source_node, size_t send_buffer_index, size_t recv_buffer_index)
 		 : target_node(target_node), source_node(source_node), valid_(true), send_buffer_index(send_buffer_index), recv_buffer_index(recv_buffer_index), req_count(0)
 		{}
@@ -89,7 +106,7 @@ public:
 		void send_result(T* result_msg, size_t size)
 		{
 			assert(communicator::this_node() == target_node); // this assert fails if send_result is called from the wrong side
-			
+
 			// TODO(improvement, low priority): better go through communicator, such that no MPI calls are anywhere else
 			MPI_Send(result_msg, size, MPI_BYTE, source_node, constants::RESULT_TAG, MPI_COMM_WORLD);
 			//communicator::instance().send_msg(source_node, source_buffer_index, NO_BUFFER_INDEX, result_msg, size);
@@ -99,7 +116,7 @@ public:
 		{
 			return valid_;
 		}
-		
+
 		MPI_Request& next_mpi_request()
 		{
 			HAM_DEBUG( HAM_LOG << "next_mpi_request(): this=" << this << ", req_count=" << req_count << ", NUM_REQUESTS=" << NUM_REQUESTS << std::endl; )
@@ -113,15 +130,15 @@ public:
 
 		// only needed by the sender
 		enum { NUM_REQUESTS = 3 };
-		
+
 		size_t send_buffer_index; // buffer to use for sending the message
 		size_t recv_buffer_index; // buffer to use for receiving the result
 		size_t req_count;
-		
+
 	private:
 		MPI_Request mpi_reqs[NUM_REQUESTS]; // for sending the msg, receiving the result, and an associated data transfer
 	}; // class request
-	
+
 	using request_reference_type = request&;
 	using request_const_reference_type = const request&;
 
@@ -148,10 +165,10 @@ public:
 		HAM_DEBUG( std::cout << "communicator::communicator(): initialising MPI done" << std::endl; )
 
 		peers = new mpi_peer[nodes_];
-		
+
 		// start of node descriptor code:
 		node_descriptions.resize(nodes_);
-		
+
 		// build own node descriptor
 		node_descriptor node_description;
 		int count;
@@ -172,7 +189,7 @@ public:
 		//MPI_Alltoall(&node_description, sizeof(node_descriptor), MPI_BYTE, node_descriptions.data(), sizeof(node_descriptor), MPI_BYTE, MPI_COMM_WORLD);
 		MPI_Allgather(&node_description, sizeof(node_descriptor), MPI_BYTE, node_descriptions.data(), sizeof(node_descriptor), MPI_BYTE, MPI_COMM_WORLD);
 		HAM_DEBUG( HAM_LOG << "communicator::communicator(): gathering node descriptions done" << std::endl; )
-		
+
 		if (is_host()) {
 			for (size_t i = 1; i < nodes_; ++i) { // TODO(improvement): needs to be changed when host-rank becomes configurable
 				node_t current_node = static_cast<node_t>(i);
@@ -188,6 +205,12 @@ public:
 
 	~communicator()
 	{
+		if (is_host()) {
+			for (size_t i = 1; i < nodes_; ++i) {
+				free_buffer<msg_buffer>(peers[i].msg_buffers);
+			}
+		}
+		delete[] peers;
 		MPI_Finalize(); // TODO(improvement): check on error and create output if there was one
 		HAM_DEBUG( HAM_LOG << "~communicator" << std::endl; )
 	}
@@ -207,7 +230,7 @@ public:
 	{
 		assert(req.valid());
 		assert(req.source_node == this_node_);
-	
+
 		mpi_peer& peer = peers[req.target_node];
 
 		peer.buffer_pool.free(req.send_buffer_index);
@@ -223,7 +246,7 @@ public:
 		memcpy(msg_buffer, msg, size);
 		MPI_Isend(msg_buffer, size, MPI_BYTE, req.target_node, constants::DEFAULT_TAG, MPI_COMM_WORLD, &req.next_mpi_request());
 	}
-	
+
 	// to be used by the offload target's main loop: synchronously receive one message at a time
 	// NOTE: the local static receive buffer!
 	void* recv_msg_host(void* msg = nullptr, size_t size = constants::MSG_SIZE)
@@ -261,7 +284,7 @@ public:
 	{
 		MPI_Recv((void*)local_dest, size * sizeof(T), MPI_BYTE, remote_source.node(), constants::DATA_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 	}
-	
+
 	// to be used by the host
 	template<typename T>
 	void recv_data_async(request_reference_type req, buffer_ptr<T> remote_source, T* local_dest, size_t size)
@@ -305,7 +328,7 @@ private:
 	size_t nodes_;
 	node_t host_node_;
 	std::vector<node_descriptor> node_descriptions; // not as member in peer below, because Allgather is used to exchange node descriptions
-		
+
 	struct mpi_peer {
 		buffer_ptr<msg_buffer> msg_buffers; // buffers used for MPI_ISend and IRecv by the sender
 
@@ -313,7 +336,7 @@ private:
 		// just manages indices, that can be used by
 		detail::resource_pool<size_t> buffer_pool;
 	};
-	
+
 	mpi_peer* peers;
 };
 
